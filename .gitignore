@@ -1,0 +1,22 @@
+# Build outputs
+bin/
+obj/
+
+# User-specific files
+*.user
+*.suo
+*.userosscache
+*.sln.docstates
+
+# IDE/editor
+.vs/
+.vscode/
+
+# Logs and generated runtime artifacts
+*.log
+rdrs_alerts.json
+rdrs_siem.ndjson
+
+# OS files
+Thumbs.db
+.DS_Store
