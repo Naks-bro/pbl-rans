@@ -9,7 +9,7 @@ namespace HoneytokenWatcher
         static void Main(string[] args)
         {
             Console.OutputEncoding = System.Text.Encoding.UTF8;
-            Console.CursorVisible = false;
+            try { Console.CursorVisible = false; } catch { }
 
             var cts = new CancellationTokenSource();
 
@@ -19,8 +19,30 @@ namespace HoneytokenWatcher
                 cts.Cancel();
             };
 
-            var engine = new DeceptionEngine();
-            engine.Run(cts.Token);
+            try
+            {
+                // 1. Plant honeytokens
+                // 2. Start watchers
+                // 3. Initialize alert manager
+                // 4. Start console UI
+                // 5. Wait for Ctrl+C
+                // 6. Cleanup tokens
+                // (All steps are orchestrated inside DeceptionEngine.Run)
+                var engine = new DeceptionEngine();
+                engine.Run(cts.Token);
+            }
+            catch (Exception ex)
+            {
+                Console.ResetColor();
+                Console.ForegroundColor = ConsoleColor.Red;
+                Console.WriteLine($"\n[FATAL] Unhandled error: {ex.Message}");
+                Console.ResetColor();
+                Environment.Exit(1);
+            }
+            finally
+            {
+                try { Console.CursorVisible = true; } catch { }
+            }
         }
     }
 }

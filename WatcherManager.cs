@@ -4,13 +4,15 @@ using System.Diagnostics;
 using System.IO;
 using System.Linq;
 using HoneytokenWatcher.Alerting;
+using HoneytokenWatcher.Analysis;
 using HoneytokenWatcher.Honeytokens;
 
 namespace HoneytokenWatcher.Watchers
 {
     public class WatcherManager
     {
-        private readonly AlertManager _alertManager;
+        private readonly AlertManager    _alertManager;
+        private readonly BurstDetector?  _burstDetector;
         private readonly List<FileSystemWatcher> _watchers = new();
 
         private Dictionary<string, HoneytokenFile> _tokenMap = new();
@@ -20,9 +22,10 @@ namespace HoneytokenWatcher.Watchers
             new(StringComparer.OrdinalIgnoreCase)
             { "powershell", "pwsh", "cmd", "wscript", "cscript", "mshta" };
 
-        public WatcherManager(AlertManager alertManager)
+        public WatcherManager(AlertManager alertManager, BurstDetector? burstDetector = null)
         {
-            _alertManager = alertManager;
+            _alertManager  = alertManager;
+            _burstDetector = burstDetector;
         }
 
         public void StartWatching(List<HoneytokenFile> tokens)
@@ -58,36 +61,61 @@ namespace HoneytokenWatcher.Watchers
 
         private void OnFileEvent(object sender, FileSystemEventArgs e)
         {
-            // Snapshot shell processes FIRST — before any async latency.
-            // Add-Content and similar one-shot commands close their handle and exit
-            // within milliseconds; capturing here maximises the chance of attribution.
-            var hint = SnapshotShellProcess();
+            // An unhandled exception inside a FSW callback silently kills all future
+            // events — wrap the entire handler so the watcher keeps running.
+            try
+            {
+                // Snapshot shell processes FIRST — before any async latency.
+                // Add-Content and similar one-shot commands close their handle and exit
+                // within milliseconds; capturing here maximises the chance of attribution.
+                var hint = SnapshotShellProcess();
 
-            var key = e.FullPath.ToLowerInvariant();
-            if (!_tokenMap.TryGetValue(key, out var token)) return;
+                // Feed burst detector with EVERY file event in the directory,
+                // not just honeytoken hits — this gives an accurate rate reading
+                // even if ransomware hasn't reached our decoy files yet.
+                _burstDetector?.RecordFileEvent(
+                    hint?.ProcessName ?? "unknown",
+                    hint?.Id ?? 0);
 
-            HandleTrigger(token, e.ChangeType.ToString(), e.FullPath, null, hint);
+                var key = e.FullPath.ToLowerInvariant();
+                if (!_tokenMap.TryGetValue(key, out var token)) return;
+
+                HandleTrigger(token, e.ChangeType.ToString(), e.FullPath, null, hint);
+            }
+            catch { /* swallow — FSW callbacks must never throw */ }
         }
 
         private void OnRenameEvent(object sender, RenamedEventArgs e)
         {
-            var hint = SnapshotShellProcess();
+            try
+            {
+                var hint = SnapshotShellProcess();
 
-            var key = e.OldFullPath.ToLowerInvariant();
-            if (!_tokenMap.TryGetValue(key, out var token)) return;
+                _burstDetector?.RecordFileEvent(
+                    hint?.ProcessName ?? "unknown",
+                    hint?.Id ?? 0);
 
-            HandleTrigger(token, "Renamed", e.OldFullPath, e.FullPath, hint);
+                var key = e.OldFullPath.ToLowerInvariant();
+                if (!_tokenMap.TryGetValue(key, out var token)) return;
+
+                HandleTrigger(token, "Renamed", e.OldFullPath, e.FullPath, hint);
+            }
+            catch { /* swallow — FSW callbacks must never throw */ }
         }
 
         private void HandleTrigger(HoneytokenFile token, string eventType,
             string path, string? newPath = null, Process? processHint = null)
         {
-            token.Status = TokenStatus.Triggered;
-            token.TriggeredAt = DateTime.Now;
-            token.TriggerCount++;
+            try
+            {
+                token.Status = TokenStatus.Triggered;
+                token.TriggeredAt = DateTime.Now;
+                token.TriggerCount++;
 
-            var alert = AlertBuilder.Build(token, eventType, newPath, processHint);
-            _alertManager.Dispatch(alert);
+                var alert = AlertBuilder.Build(token, eventType, newPath, processHint);
+                _alertManager.Dispatch(alert);
+            }
+            catch { /* alert pipeline failure must not crash the watcher */ }
         }
 
         /// <summary>

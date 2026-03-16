@@ -6,7 +6,8 @@ namespace HoneytokenWatcher.Honeytokens
     {
         Watching,
         Triggered,
-        Missing   // deleted by attacker
+        Missing,    // deleted by attacker
+        Contained   // attacker process was killed/suspended by containment
     }
 
     public class HoneytokenFile

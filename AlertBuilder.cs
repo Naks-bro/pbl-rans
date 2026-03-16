@@ -27,34 +27,58 @@ namespace HoneytokenWatcher.Alerting
                 TriggerCount  = token.TriggerCount,
             };
 
-            var proc = GetAccessingProcess(token.FullPath, processHint);
-            if (proc != null)
+            // Process detection — failure is non-fatal; alert still fires with defaults
+            try
             {
-                alert.ProcessName      = proc.ProcessName;
-                alert.ProcessId        = proc.Id;
-                alert.ProcessPath      = proc.MainModule?.FileName ?? "unknown";
-                alert.ParentProcessId  = GetParentPid(proc.Id);
-                alert.ParentProcessName = GetProcessNameById(alert.ParentProcessId);
-                alert.IsSigned         = IsProcessSigned(alert.ProcessPath);
+                var proc = GetAccessingProcess(token.FullPath, processHint);
+                if (proc != null)
+                {
+                    alert.ProcessName = proc.ProcessName;
+                    alert.ProcessId   = proc.Id;
+
+                    // MainModule can throw Win32Exception for protected / cross-bitness processes
+                    try { alert.ProcessPath = proc.MainModule?.FileName ?? "unknown"; }
+                    catch { alert.ProcessPath = "unknown"; }
+
+                    alert.ParentProcessId   = GetParentPid(proc.Id);
+                    alert.ParentProcessName = GetProcessNameById(alert.ParentProcessId);
+
+                    try { alert.IsSigned = IsProcessSigned(alert.ProcessPath); }
+                    catch { alert.IsSigned = false; }
+                }
             }
+            catch { /* process attribution failed — alert still fires with default values */ }
 
             // Entropy analysis — only meaningful for write events
-            if (eventType == "Changed" || eventType == "Created")
+            try
             {
-                var entropy = EntropyAnalyzer.CalculateForFile(token.FullPath);
-                alert.EntropyScore = entropy;
-                if (entropy > 7.2)
-                    alert.Indicators.Add("HIGH_ENTROPY_WRITE");
+                if (eventType == "Changed" || eventType == "Created")
+                {
+                    var entropy = EntropyAnalyzer.CalculateForFile(token.FullPath);
+                    alert.EntropyScore = entropy;
+                    if (entropy > 7.2)
+                        alert.Indicators.Add("HIGH_ENTROPY_WRITE");
+                }
             }
+            catch { /* entropy analysis failed — continue without it */ }
 
-            alert.RiskScore = CalculateRiskScore(alert);
-            alert.RiskLabel = alert.RiskScore switch
+            // Risk scoring — clamp on failure so the alert is still usable
+            try
             {
-                >= 80 => "CRITICAL",
-                >= 60 => "HIGH",
-                >= 40 => "MEDIUM",
-                _     => "LOW"
-            };
+                alert.RiskScore = CalculateRiskScore(alert);
+                alert.RiskLabel = alert.RiskScore switch
+                {
+                    >= 80 => "CRITICAL",
+                    >= 60 => "HIGH",
+                    >= 40 => "MEDIUM",
+                    _     => "LOW"
+                };
+            }
+            catch
+            {
+                alert.RiskScore = 0;
+                alert.RiskLabel = "UNKNOWN";
+            }
 
             return alert;
         }
