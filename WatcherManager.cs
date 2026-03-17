@@ -17,6 +17,9 @@ namespace HoneytokenWatcher.Watchers
 
         private Dictionary<string, HoneytokenFile> _tokenMap = new();
 
+        /// <summary>When true, file-system events are silently ignored (pause mode).</summary>
+        public volatile bool Paused;
+
         // Shell/script process names that could be running ransomware or test commands
         private static readonly HashSet<string> ShellNames =
             new(StringComparer.OrdinalIgnoreCase)
@@ -65,6 +68,7 @@ namespace HoneytokenWatcher.Watchers
             // events — wrap the entire handler so the watcher keeps running.
             try
             {
+                if (Paused) return;
                 // Snapshot shell processes FIRST — before any async latency.
                 // Add-Content and similar one-shot commands close their handle and exit
                 // within milliseconds; capturing here maximises the chance of attribution.
@@ -89,6 +93,7 @@ namespace HoneytokenWatcher.Watchers
         {
             try
             {
+                if (Paused) return;
                 var hint = SnapshotShellProcess();
 
                 _burstDetector?.RecordFileEvent(

@@ -4,6 +4,7 @@ using System.IO;
 using System.Threading;
 using HoneytokenWatcher.Alerting;
 using HoneytokenWatcher.Analysis;
+using HoneytokenWatcher.Config;
 using HoneytokenWatcher.Containment;
 using HoneytokenWatcher.Honeytokens;
 using HoneytokenWatcher.Monitoring;
@@ -26,15 +27,46 @@ namespace HoneytokenWatcher.Core
         private readonly NetworkMonitor         _networkMonitor;
         private readonly SignalFusion           _signalFusion;
         private readonly ConsoleUI              _ui;
-        private readonly List<HoneytokenFile> _deployedTokens = new();
+        private readonly RdrsConfig             _config;
+        private readonly List<HoneytokenFile>   _deployedTokens = new();
 
-        public DeceptionEngine()
+        // ── Public properties ─────────────────────────────────────────────────
+
+        public int      TokenCount   => _deployedTokens.Count;
+        public int      TotalAlerts  => _alertManager.TotalAlerts;
+        public bool     IsPaused     => _watcherManager.Paused;
+        public DateTime StartedAt    { get; private set; }
+
+        /// <summary>Most recent honeytoken alert, or null if none have fired.</summary>
+        public HoneytokenAlert?   LastAlert       { get; private set; }
+
+        /// <summary>Most recent containment action, or null if none have fired.</summary>
+        public ContainmentRecord? LastContainment { get; private set; }
+
+        /// <summary>Returns the last <paramref name="n"/> honeytoken alerts.</summary>
+        public List<HoneytokenAlert> GetRecentAlerts(int n) => _alertManager.GetRecent(n);
+
+        /// <summary>
+        /// Fires on every honeytoken alert, on a thread-pool thread.
+        /// Subscribers must marshal to the UI thread if needed.
+        /// </summary>
+        public event Action<HoneytokenAlert>? OnAlert;
+
+        // ── Constructors ──────────────────────────────────────────────────────
+
+        public DeceptionEngine() : this(new RdrsConfig()) { }
+
+        public DeceptionEngine(RdrsConfig config)
         {
+            _config            = config;
             _alertManager      = new AlertManager("rdrs_alerts.json");
             _burstDetector     = new BurstDetector();
             _planter           = new HoneytokenPlanter();
             _watcherManager    = new WatcherManager(_alertManager, _burstDetector);
-            _containmentEngine = new ContainmentEngine("rdrs_containment.json");
+            _containmentEngine = new ContainmentEngine("rdrs_containment.json")
+            {
+                Mode = config.ContainmentMode
+            };
             _vssWatcher        = new VssWatcher(_alertManager);
             _etwMonitor        = new EtwMonitor();
             _signalFusion      = new SignalFusion();
@@ -44,104 +76,136 @@ namespace HoneytokenWatcher.Core
             _ui                = new ConsoleUI();
         }
 
+        // ── Pause / Resume ────────────────────────────────────────────────────
+
+        /// <summary>
+        /// Silences honeytoken watchers for <paramref name="seconds"/> seconds,
+        /// then automatically resumes.  Pass 0 to pause indefinitely.
+        /// </summary>
+        public void Pause(int seconds)
+        {
+            _watcherManager.Paused = true;
+            if (seconds > 0)
+            {
+                System.Threading.Tasks.Task.Delay(seconds * 1000).ContinueWith(_ => Resume());
+            }
+        }
+
+        public void Resume()
+        {
+            _watcherManager.Paused = false;
+        }
+
+        // ── Main entry point ──────────────────────────────────────────────────
+
         public void Run(CancellationToken ct)
         {
+            StartedAt = DateTime.Now;
             _ui.DrawBanner();
             _ui.Status($"Alert log → {Path.GetFullPath("rdrs_alerts.json")}");
 
-            // 1. Plant honeytokens
-            try
+            // 1. Plant honeytokens (can be disabled in config)
+            if (_config.EnableHoneytokens)
             {
-                _ui.Status("Planting honeytokens...");
-                _deployedTokens.AddRange(_planter.PlantAll());
-                _ui.Status($"Planted {_deployedTokens.Count} honeytokens across monitored directories.");
-            }
-            catch (Exception ex)
-            {
-                _ui.Warn($"Honeytoken planting error: {ex.Message}");
-            }
-
-            if (_deployedTokens.Count == 0)
-            {
-                _ui.Warn("No honeytokens could be planted — nothing to watch. Exiting.");
-                return;
-            }
-
-            // 2. Start watchers + VSS watcher
-            try
-            {
-                _ui.Status("Starting FileSystemWatchers...");
-                _watcherManager.StartWatching(_deployedTokens);
-                _ui.Status("All watchers active. Deception layer is live.");
-            }
-            catch (Exception ex)
-            {
-                _ui.Warn($"Watcher startup failed: {ex.Message}");
-                _planter.RemoveAll(_deployedTokens);
-                return;
-            }
-
-            try
-            {
-                _vssWatcher.Start();
-                _ui.Status("VSS/Shadow-copy watcher active.\n");
-            }
-            catch (Exception ex)
-            {
-                _ui.Warn($"VSS watcher failed to start (non-fatal): {ex.Message}");
-            }
-
-            // 3a. Start ETW monitor — feeds signals into SignalFusion
-            try
-            {
-                _etwMonitor.OnSignal += (sig) =>
+                try
                 {
-                    try { _signalFusion.Submit(sig); }
-                    catch { }
-                };
-                _etwMonitor.Start();
-                _ui.Status("ETW kernel file-monitor active.");
-            }
-            catch (UnauthorizedAccessException)
-            {
-                _ui.Warn("ETW monitor requires admin rights — skipping (non-fatal).");
-            }
-            catch (Exception ex)
-            {
-                _ui.Warn($"ETW monitor failed to start (non-fatal): {ex.Message}");
+                    _ui.Status("Planting honeytokens...");
+                    _deployedTokens.AddRange(_planter.PlantAll());
+                    _ui.Status($"Planted {_deployedTokens.Count} honeytokens across monitored directories.");
+                }
+                catch (Exception ex)
+                {
+                    _ui.Warn($"Honeytoken planting error: {ex.Message}");
+                }
+
+                if (_deployedTokens.Count == 0)
+                {
+                    _ui.Warn("No honeytokens could be planted — nothing to watch. Exiting.");
+                    return;
+                }
+
+                // 2. Start watchers + VSS watcher
+                try
+                {
+                    _ui.Status("Starting FileSystemWatchers...");
+                    _watcherManager.StartWatching(_deployedTokens);
+                    _ui.Status("All watchers active. Deception layer is live.");
+                }
+                catch (Exception ex)
+                {
+                    _ui.Warn($"Watcher startup failed: {ex.Message}");
+                    _planter.RemoveAll(_deployedTokens);
+                    return;
+                }
+
+                try
+                {
+                    _vssWatcher.Start();
+                    _ui.Status("VSS/Shadow-copy watcher active.\n");
+                }
+                catch (Exception ex)
+                {
+                    _ui.Warn($"VSS watcher failed to start (non-fatal): {ex.Message}");
+                }
             }
 
-            // 3b. CryptoApiMonitor — correlates ETW crypto signals + optional BCrypt ETW
-            try
+            // 3a. ETW monitor (optional via config)
+            if (_config.EnableEtwMonitor)
             {
-                _cryptoMonitor.Start(_etwMonitor);
-                _ui.Status("Crypto-API monitor active (ETW correlation + BCrypt provider).");
-            }
-            catch (Exception ex)
-            {
-                _ui.Warn($"CryptoApiMonitor failed to start (non-fatal): {ex.Message}");
+                try
+                {
+                    _etwMonitor.OnSignal += (sig) =>
+                    {
+                        try { _signalFusion.Submit(sig); }
+                        catch { }
+                    };
+                    _etwMonitor.Start();
+                    _ui.Status("ETW kernel file-monitor active.");
+                }
+                catch (UnauthorizedAccessException)
+                {
+                    _ui.Warn("ETW monitor requires admin rights — skipping (non-fatal).");
+                }
+                catch (Exception ex)
+                {
+                    _ui.Warn($"ETW monitor failed to start (non-fatal): {ex.Message}");
+                }
+
+                // 3b. CryptoApiMonitor — correlates ETW crypto signals + optional BCrypt ETW
+                try
+                {
+                    _cryptoMonitor.Start(_etwMonitor);
+                    _ui.Status("Crypto-API monitor active (ETW correlation + BCrypt provider).");
+                }
+                catch (Exception ex)
+                {
+                    _ui.Warn($"CryptoApiMonitor failed to start (non-fatal): {ex.Message}");
+                }
+
+                // 3c. ProcessBehaviorScorer — WMI I/O rate + parent-child anomaly detection
+                try
+                {
+                    _procScorer.Start();
+                    _ui.Status("Process behaviour scorer active (I/O rate + parent-child anomaly).");
+                }
+                catch (Exception ex)
+                {
+                    _ui.Warn($"ProcessBehaviorScorer failed to start (non-fatal): {ex.Message}");
+                }
             }
 
-            // 3c. ProcessBehaviorScorer — WMI I/O rate + parent-child anomaly detection
-            try
+            // 3d. NetworkMonitor (optional via config)
+            if (_config.EnableNetworkMonitor)
             {
-                _procScorer.Start();
-                _ui.Status("Process behaviour scorer active (I/O rate + parent-child anomaly).");
-            }
-            catch (Exception ex)
-            {
-                _ui.Warn($"ProcessBehaviorScorer failed to start (non-fatal): {ex.Message}");
-            }
-
-            // 3d. NetworkMonitor — TCP connection tracking + Tor DNSBL
-            try
-            {
-                _networkMonitor.Start();
-                _ui.Status("Network monitor active (TCP connections + hardcoded Tor exits).");
-            }
-            catch (Exception ex)
-            {
-                _ui.Warn($"NetworkMonitor failed to start (non-fatal): {ex.Message}");
+                try
+                {
+                    _networkMonitor.Start();
+                    _ui.Status("Network monitor active (TCP connections + hardcoded Tor exits).");
+                }
+                catch (Exception ex)
+                {
+                    _ui.Warn($"NetworkMonitor failed to start (non-fatal): {ex.Message}");
+                }
             }
 
             // SignalFusion callback — FusedThreat drives containment independently of FSW
@@ -155,6 +219,7 @@ namespace HoneytokenWatcher.Core
                     var record = _containmentEngine.Respond(threat);
                     if (record.Action != ContainmentAction.None || record.PathBlocked)
                     {
+                        LastContainment = record;
                         try { _ui.DrawContainment(record); }
                         catch { }
                     }
@@ -165,6 +230,10 @@ namespace HoneytokenWatcher.Core
             // 3. Initialize alert manager — register callbacks
             _alertManager.OnAlert += (alert) =>
             {
+                // Expose to tray / external subscribers
+                LastAlert = alert;
+                try { OnAlert?.Invoke(alert); } catch { }
+
                 // Draw alert first so the user sees it immediately
                 try { _ui.DrawAlert(alert); }
                 catch { /* UI failure must not crash the alert pipeline */ }
@@ -209,6 +278,8 @@ namespace HoneytokenWatcher.Core
 
                     if (record.Action != ContainmentAction.None || record.PathBlocked)
                     {
+                        LastContainment = record;
+
                         // Mark the token as contained on the status board
                         var token = _deployedTokens.Find(t => t.FullPath == alert.TokenPath);
                         if (token != null)
@@ -237,7 +308,7 @@ namespace HoneytokenWatcher.Core
             }
             catch { /* non-fatal — terminal may not support all cursor operations */ }
 
-            // 5. Wait for Ctrl+C
+            // 5. Wait for cancellation
             try
             {
                 while (!ct.IsCancellationRequested)
@@ -249,7 +320,7 @@ namespace HoneytokenWatcher.Core
             }
             finally
             {
-                // 6. Cleanup tokens — always runs, even if the loop throws
+                // 6. Cleanup — always runs, even if the loop throws
                 try
                 {
                     _ui.Status("\nShutting down — removing honeytokens...");

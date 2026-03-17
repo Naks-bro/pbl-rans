@@ -39,7 +39,45 @@ namespace HoneytokenWatcher.Honeytokens
             ("_AAAA_medical_records.pdf",      () => GeneratePdf("Medical Record", "Patient: Jane Doe\nDOB: 1985-03-12\nDiagnosis: Healthy")),
         };
 
+        // Extensions ransomware appends to encrypted files
+        private static readonly string[] StaleExtensions =
+        {
+            ".locked", ".encrypted", ".enc", ".wncry", ".ransom",
+            ".crypt", ".crypted", ".pays", ".rdm", ".wallet", ".wnry",
+        };
+
+        // Known-good extensions for honeytoken files
+        private static readonly HashSet<string> GoodExtensions =
+            new(StringComparer.OrdinalIgnoreCase)
+            { ".docx", ".pdf", ".jpg", ".xlsx", ".txt", ".png", ".mp4", ".bak" };
+
         private readonly List<string> _plantedPaths = new();
+
+        /// <summary>
+        /// Deletes stale <c>_AAAA_*</c> files that ransomware renamed/encrypted
+        /// during a previous run, so fresh tokens can always be planted.
+        /// </summary>
+        private static void CleanStaleTokens(string dir)
+        {
+            try
+            {
+                foreach (var file in Directory.GetFiles(dir, "_AAAA_*"))
+                {
+                    var ext = Path.GetExtension(file);
+                    bool isStale = !GoodExtensions.Contains(ext)
+                        || Array.Exists(StaleExtensions,
+                               s => file.EndsWith(s, StringComparison.OrdinalIgnoreCase));
+                    if (!isStale) continue;
+                    try
+                    {
+                        File.SetAttributes(file, FileAttributes.Normal);
+                        File.Delete(file);
+                    }
+                    catch { }
+                }
+            }
+            catch { /* best effort — don't crash startup */ }
+        }
 
         public List<HoneytokenFile> PlantAll()
         {
@@ -48,6 +86,10 @@ namespace HoneytokenWatcher.Honeytokens
             foreach (var dir in TargetDirs)
             {
                 if (!Directory.Exists(dir)) continue;
+
+                // Remove any leftovers from a previous run that ransomware
+                // may have renamed/encrypted (.locked, .encrypted, etc.)
+                CleanStaleTokens(dir);
 
                 // Plant 2 tokens per directory
                 for (int i = 0; i < Math.Min(2, _tokenDefs.Count); i++)

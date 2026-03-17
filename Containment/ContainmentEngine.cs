@@ -7,6 +7,7 @@ using System.Runtime.InteropServices;
 using System.Text.Json;
 using System.Text.Json.Serialization;
 using HoneytokenWatcher.Alerting;
+using HoneytokenWatcher.Config;
 
 namespace HoneytokenWatcher.Containment
 {
@@ -67,6 +68,9 @@ namespace HoneytokenWatcher.Containment
 
         public event Action<ContainmentRecord>? OnContainment;
 
+        /// <summary>Controls how aggressively the engine responds to a threat.</summary>
+        public ContainmentMode Mode { get; set; } = ContainmentMode.KillAndSuspend;
+
         public ContainmentEngine(string logPath = "rdrs_containment.json")
         {
             _logPath = logPath;
@@ -96,21 +100,25 @@ namespace HoneytokenWatcher.Containment
                 return record;
             }
 
-            // ── Step 2.2 then 2.1 ────────────────────────────────────────────
-            try
+            // ── Step 2.2 then 2.1 (skipped in AlertOnly mode) ───────────────
+            if (Mode != ContainmentMode.AlertOnly)
             {
-                var proc = Process.GetProcessById(alert.ProcessId);
+                try
+                {
+                    var proc = Process.GetProcessById(alert.ProcessId);
 
-                // Suspend first: freezes all threads immediately, stopping encryption
-                // cold while we still hold the process reference.
-                if (TrySuspend(proc))
-                    record.Action = ContainmentAction.Suspended;
+                    // Suspend first: freezes all threads immediately, stopping encryption
+                    // cold while we still hold the process reference.
+                    if (TrySuspend(proc))
+                        record.Action = ContainmentAction.Suspended;
 
-                // Kill: terminates the process and its entire child tree.
-                if (TryKill(proc))
-                    record.Action = ContainmentAction.Killed;
+                    // Kill: terminates the process and its entire child tree.
+                    // Skipped in SuspendOnly mode — process stays frozen instead.
+                    if (Mode == ContainmentMode.KillAndSuspend && TryKill(proc))
+                        record.Action = ContainmentAction.Killed;
+                }
+                catch { /* process may have already exited — not an error */ }
             }
-            catch { /* process may have already exited — not an error */ }
 
             // ── Step 2.3 ─────────────────────────────────────────────────────
             if (!string.IsNullOrEmpty(alert.ProcessPath)

@@ -1,4 +1,4 @@
-# RDRS — Ransomware Detection & Response Service
+# RDRS -- Ransomware Detection & Response Service
 
 > A multi-layer, real-time ransomware detection and automatic containment system for Windows,
 > built as a **Project-Based Learning (PBL)** exercise in applied cybersecurity.
@@ -8,26 +8,29 @@
 ## Table of Contents
 
 1. [Overview](#overview)
-2. [How It Works — The Big Picture](#how-it-works--the-big-picture)
+2. [How It Works -- The Big Picture](#how-it-works----the-big-picture)
 3. [Architecture](#architecture)
 4. [Detection Layers](#detection-layers)
-   - [Layer 1 — Honeytoken Deception](#layer-1--honeytoken-deception)
-   - [Layer 2 — ETW Kernel File Monitor](#layer-2--etw-kernel-file-monitor)
-   - [Layer 3 — Crypto API Monitor](#layer-3--crypto-api-monitor)
-   - [Layer 4 — Process Behaviour Scorer](#layer-4--process-behaviour-scorer)
-   - [Layer 5 — Network Monitor](#layer-5--network-monitor)
-   - [Layer 6 — VSS / Shadow Copy Watcher](#layer-6--vss--shadow-copy-watcher)
-   - [Layer 7 — Burst Detector](#layer-7--burst-detector)
+   - [Layer 1 -- Honeytoken Deception](#layer-1----honeytoken-deception)
+   - [Layer 2 -- ETW Kernel File Monitor](#layer-2----etw-kernel-file-monitor)
+   - [Layer 3 -- Crypto API Monitor](#layer-3----crypto-api-monitor)
+   - [Layer 4 -- Process Behaviour Scorer](#layer-4----process-behaviour-scorer)
+   - [Layer 5 -- Network Monitor](#layer-5----network-monitor)
+   - [Layer 6 -- VSS / Shadow Copy Watcher](#layer-6----vss--shadow-copy-watcher)
+   - [Layer 7 -- Burst Detector](#layer-7----burst-detector)
 5. [Signal Fusion Engine](#signal-fusion-engine)
 6. [Automatic Containment](#automatic-containment)
-7. [Alert Format](#alert-format)
-8. [Project Structure](#project-structure)
-9. [Requirements](#requirements)
-10. [Installation & Build](#installation--build)
-11. [Running the Tool](#running-the-tool)
-12. [Testing Detection](#testing-detection)
-13. [Output Files](#output-files)
-14. [Design Decisions & Limitations](#design-decisions--limitations)
+7. [Windows Tray Application](#windows-tray-application)
+8. [Live Dashboard](#live-dashboard)
+9. [Configuration](#configuration)
+10. [Alert Format](#alert-format)
+11. [Project Structure](#project-structure)
+12. [Requirements](#requirements)
+13. [Installation & Build](#installation--build)
+14. [Running the Tool](#running-the-tool)
+15. [Testing Detection](#testing-detection)
+16. [Output Files](#output-files)
+17. [Design Decisions & Limitations](#design-decisions--limitations)
 
 ---
 
@@ -36,12 +39,12 @@
 RDRS is a Windows endpoint security tool that detects ransomware **before** it finishes encrypting
 your files and **automatically kills the attacking process**.
 
-It combines seven independent detection techniques — deception files, kernel event tracing,
+It combines seven independent detection techniques -- deception files, kernel event tracing,
 crypto-API monitoring, process behaviour analysis, network monitoring, shadow-copy watch, and
-burst detection — into a single weighted **Signal Fusion Engine** that produces a composite
+burst detection -- into a single weighted **Signal Fusion Engine** that produces a composite
 threat score per process in real time.
 
-When the fused score of any process reaches **≥ 70 / 100** the containment engine:
+When the fused score of any process reaches **>= 70 / 100** the containment engine:
 
 1. **Suspends** all threads instantly (`NtSuspendProcess`)
 2. **Kills** the process and its entire child tree (`Process.Kill(entireProcessTree: true)`)
@@ -52,16 +55,16 @@ All events are logged to `rdrs_alerts.json` and `rdrs_containment.json`.
 
 ---
 
-## How It Works — The Big Picture
+## How It Works -- The Big Picture
 
 ```
-Ransomware starts  →  touches honeytoken files    →  FileSystemWatcher fires
-                   →  loads bcrypt.dll repeatedly  →  ETW ImageLoad fires
-                   →  encrypts 50+ files / 5 sec   →  ETW FileIO rate fires
-                   →  renames *.docx → *.locked    →  extension rename fires
-                   →  deletes shadow copies         →  WMI VssWatcher fires
-                   →  WMI I/O write rate spikes     →  ProcessBehaviorScorer fires
-                   →  makes outbound connection     →  NetworkMonitor fires
+Ransomware starts  ->  touches honeytoken files    ->  FileSystemWatcher fires
+                   ->  loads bcrypt.dll repeatedly  ->  ETW ImageLoad fires
+                   ->  encrypts 50+ files / 5 sec   ->  ETW FileIO rate fires
+                   ->  renames *.docx -> *.locked   ->  extension rename fires
+                   ->  deletes shadow copies        ->  WMI VssWatcher fires
+                   ->  WMI I/O write rate spikes    ->  ProcessBehaviorScorer fires
+                   ->  makes outbound connection    ->  NetworkMonitor fires
                                    |
                                    v
                          SignalFusion accumulates
@@ -72,7 +75,7 @@ Ransomware starts  →  touches honeytoken files    →  FileSystemWatcher fires
                       Suspend -> Kill -> Block -> Defender
 ```
 
-The key insight is **no single signal is reliable alone** — a user can open a DOCX, bcrypt.dll
+The key insight is **no single signal is reliable alone** -- a user can open a DOCX, bcrypt.dll
 loads all the time, and file writes are normal. Only the *combination* of signals from the same
 process within a short time window reaches a conclusive score.
 
@@ -127,7 +130,7 @@ process within a short time window reaches a conclusive score.
 
 ## Detection Layers
 
-### Layer 1 — Honeytoken Deception
+### Layer 1 -- Honeytoken Deception
 
 **Files:** `HoneytokenPlanter.cs`, `WatcherManager.cs`, `AlertBuilder.cs`
 
@@ -143,29 +146,29 @@ targets first:
 
 **Why `_AAAA_` prefix?**
 Files sort alphabetically. Ransomware encrypts in directory order, so it hits our decoys
-*first* — triggering detection before any real file is touched.
+*first* -- triggering detection before any real file is touched.
 
 **File realism:**
-Each honeytoken is structurally valid — DOCX/XLSX are real ZIP+XML Office packages, PDFs
+Each honeytoken is structurally valid -- DOCX/XLSX are real ZIP+XML Office packages, PDFs
 have a working xref table, JPEGs have a correct JFIF/APP0 header. Ransomware that
 inspects magic bytes or file structure still treats them as genuine encryption targets.
 
 **ACL setup:**
 Files are set `Hidden + System` (invisible in Explorer) with `BUILTIN\Users:Modify` DACL
 and `icacls /setintegritylevel Medium` so non-elevated ransomware running in user context
-can write to them — making them maximally attractive as encryption targets.
+can write to them -- making them maximally attractive as encryption targets.
 
 **When triggered:**
 Any `Changed`, `Renamed`, `Deleted`, or `Created` event on a honeytoken fires
 `AlertBuilder.Build()` which performs:
-- 3-stage process attribution (Restart Manager → FSW-time shell hint → handle-count scan)
+- 3-stage process attribution (Restart Manager -> FSW-time shell hint -> handle-count scan)
 - Shannon entropy measurement on the written bytes (>7.2 bits/byte = encrypted content)
 - Risk scoring (55 base + event-type bonus + entropy bonus + process modifiers)
 - A `ThreatSignal(Honeytoken, rawScore)` submitted to SignalFusion
 
 ---
 
-### Layer 2 — ETW Kernel File Monitor
+### Layer 2 -- ETW Kernel File Monitor
 
 **File:** `Monitoring/EtwMonitor.cs`
 **Requires:** Administrator
@@ -181,49 +184,47 @@ KernelTraceEventParser.Keywords.FileIOInit | FileIO | ImageLoad
 
 | Rule | Threshold | Raw Score | Indicator |
 |------|-----------|-----------|-----------|
-| File I/O rate | >50 files/5 s from one process | 0.50 – 1.0 | `FILE_RATE_HIGH` |
+| File I/O rate | >50 files/5 s from one process | 0.50 - 1.0 | `FILE_RATE_HIGH` |
 | Ransom extension | New file with `.locked` / `.enc` / `.wncry` / 30+ others | 0.90 | `RANSOM_EXT_RENAME` |
-| Crypto DLL load | `bcrypt.dll` / `rsaenh.dll` / `ncrypt.dll` loaded ≥2× in 10 s | 0.60 | `CRYPTO_DLL_LOAD` |
+| Crypto DLL load | `bcrypt.dll` / `rsaenh.dll` / `ncrypt.dll` loaded >= 2x in 10 s | 0.60 | `CRYPTO_DLL_LOAD` |
 
 Falls back silently if not running as admin.
 
 ---
 
-### Layer 3 — Crypto API Monitor
+### Layer 3 -- Crypto API Monitor
 
 **File:** `Monitoring/CryptoApiMonitor.cs`
 
-**Layer A — Signal correlation (always active):**
+**Layer A -- Signal correlation (always active):**
 Subscribes to `EtwMonitor.OnSignal`. Maintains a 30-second per-process sliding window.
 Fires a higher-confidence signal when correlated patterns appear from the *same PID*:
 
 | Pattern | Raw Score | Indicator |
 |---------|-----------|-----------|
 | `RANSOM_EXT_RENAME` seen | 0.92 | `RANSOM_EXT_CORRELATED` |
-| `CRYPTO_DLL_LOAD` ×2 + `FILE_RATE_HIGH` | 0.82 | `CRYPTO_LOAD_AND_FILE_BURST` |
-| `CRYPTO_DLL_LOAD` ×4 in 30 s alone | 0.65 | `HIGH_FREQ_CRYPTO_DLL` |
+| `CRYPTO_DLL_LOAD` x2 + `FILE_RATE_HIGH` | 0.82 | `CRYPTO_LOAD_AND_FILE_BURST` |
+| `CRYPTO_DLL_LOAD` x4 in 30 s alone | 0.65 | `HIGH_FREQ_CRYPTO_DLL` |
 
-**Layer B — BCrypt ETW provider (admin, best-effort):**
-Subscribes to the `Microsoft-Windows-Crypto-BCrypt` provider
-(GUID `A74EFE00-14BE-4EF9-9DA2-1E9A0E2B92F2`). If BCrypt events arrive from a
-non-system process at >20 events / 5 seconds, a `BCRYPT_API_BURST` signal (0.75) fires.
+**Layer B -- BCrypt ETW provider (admin, best-effort):**
+Subscribes to the `Microsoft-Windows-Crypto-BCrypt` provider. If BCrypt events arrive
+from a non-system process at >20 events / 5 seconds, a `BCRYPT_API_BURST` signal (0.75) fires.
 Falls back silently if unavailable.
 
 ---
 
-### Layer 4 — Process Behaviour Scorer
+### Layer 4 -- Process Behaviour Scorer
 
 **File:** `Monitoring/ProcessBehaviorScorer.cs`
 
-Polls `Win32_Process` via WMI every **2 seconds** using a single batch query. Tracks three
-independent behavioural signals:
+Polls `Win32_Process` via WMI every **2 seconds**. Tracks three signals:
 
 **I/O write rate** (`WriteTransferCount` delta since last poll):
 
-| Rate | Raw Score | Source Weight |
-|------|-----------|---------------|
-| > 5 MB/s | 0.60 | EtwFileRate (0.20) |
-| > 20 MB/s | 0.85 | EtwFileRate (0.20) |
+| Rate | Raw Score |
+|------|-----------|
+| > 5 MB/s | 0.60 |
+| > 20 MB/s | 0.85 |
 
 **Handle storm** (handles acquired per poll interval):
 
@@ -231,31 +232,27 @@ independent behavioural signals:
 |-------|-----------|
 | +500 handles/2 s | 0.65 |
 
-**Parent → child anomaly** (Living-off-the-Land pivot detection):
+**Parent-child anomaly** (Living-off-the-Land pivot detection):
 
 | Parent | Suspicious children | Raw Score |
 |--------|--------------------|----|
-| `winword`, `excel`, `outlook`, `powerpnt` | `cmd`, `powershell`, `pwsh`, `wscript`, `cscript`, `mshta`, `certutil` | 0.70 |
-| `explorer` | `certutil`, `regsvr32`, `mshta`, `wscript`, `cscript` | 0.70 |
-| `svchost` | `powershell`, `cmd`, `wscript`, `certutil`, `mshta` | 0.70 |
+| `winword`, `excel`, `outlook`, `powerpnt` | `cmd`, `powershell`, `wscript`, `certutil` | 0.70 |
+| `explorer` | `certutil`, `regsvr32`, `mshta`, `wscript` | 0.70 |
+| `svchost` | `powershell`, `cmd`, `wscript`, `certutil` | 0.70 |
 
-**Suspicious launch location** (checked once per PID on first spawn):
+**Suspicious launch location:**
 
 | Condition | Raw Score | Indicator |
 |-----------|-----------|-----------|
-| Executable in `%TEMP%`, `%TMP%`, `%AppData%`, or `%LocalAppData%` | 0.65 | `PROC_SUSPICIOUS_LOCATION` |
-
-Falls back to `System.Diagnostics.Process` handle-count-only mode when WMI is unavailable.
+| Executable in `%TEMP%`, `%AppData%`, or `%LocalAppData%` | 0.65 | `PROC_SUSPICIOUS_LOCATION` |
 
 ---
 
-### Layer 5 — Network Monitor
+### Layer 5 -- Network Monitor
 
 **File:** `Monitoring/NetworkMonitor.cs`
 
 Polls TCP connections every **2 seconds** via `IPGlobalProperties.GetActiveTcpConnections()`.
-Uses `GetExtendedTcpTable` (iphlpapi.dll P/Invoke) only for PID attribution on suspicious
-connections — all connection enumeration goes through the managed API.
 
 **Detection rules:**
 
@@ -266,45 +263,29 @@ connections — all connection enumeration goes through the managed API.
 | `HIGH_CONN_RATE` | 0.65 | >30 new distinct remote IPs within 10 seconds |
 | `EXFIL_DURING_FILE_ACTIVITY` | 0.70 | New external connection within 30 s of a honeytoken/burst event |
 
-**Hardcoded Tor exit nodes** (top-20 high-bandwidth exits, update periodically):
-```
-185.220.101.1-6  |  23.129.64.131-135  |  199.249.230.68-70
-104.244.73.201-202  |  193.218.118.173-174  |  45.148.10.23  |  192.42.116.176
-```
-
-**File-activity correlation:**
-`DeceptionEngine` calls `NetworkMonitor.NotifyFileActivity()` whenever a honeytoken alert
-or burst event fires. Any new external TCP connection within the following 30 seconds is
-flagged as a potential exfiltration channel.
-
 ---
 
-### Layer 6 — VSS / Shadow Copy Watcher
+### Layer 6 -- VSS / Shadow Copy Watcher
 
 **File:** `Analysis/VssWatcher.cs`
 **Requires:** Administrator
 
-Uses a WMI `__InstanceCreationEvent` subscription (1-second polling interval) to intercept
-every new process creation system-wide and inspect its command line against 7 patterns:
+WMI `__InstanceCreationEvent` subscription intercepts every new process creation and checks
+the command line against 7 patterns:
 
 | Pattern matched | Indicator | Risk Score |
 |----------------|-----------|-----------|
-| `vssadmin` / `delete shadows` / `shadowcopy delete` | `SHADOW_COPY_DELETION_ATTEMPT` | 100 / CRITICAL |
+| `vssadmin` / `delete shadows` | `SHADOW_COPY_DELETION_ATTEMPT` | 100 / CRITICAL |
 | `wbadmin` / `delete catalog` | `BACKUP_CATALOG_DELETED` | 100 / CRITICAL |
 | `bcdedit` / `recoveryenabled no` | `BOOT_RECOVERY_DISABLED` | 100 / CRITICAL |
 
-Virtually all known ransomware families run these commands before encryption to destroy
-Windows restore points. A match fires a CRITICAL `HoneytokenAlert` immediately through
-`AlertManager`, bypassing the fusion threshold.
-
 ---
 
-### Layer 7 — Burst Detector
+### Layer 7 -- Burst Detector
 
 **File:** `Analysis/BurstDetector.cs`
 
-Maintains a sliding **3-second window** queue of all `FileSystemWatcher` events across every
-monitored directory (not just honeytoken hits). Fires a `BurstEvent` when:
+Sliding **3-second window** of all FileSystemWatcher events. Fires when:
 
 ```
 event_count_in_window > 10
@@ -312,10 +293,7 @@ event_count_in_window > 10
 ( average_entropy_of_recent_writes > 7.0  OR  no entropy data yet )
 ```
 
-Entropy data is fed back from honeytoken write-alerts via `RecordEntropyScore()`, making the
-detector progressively smarter as encryption events accumulate. A **15-second cooldown**
-prevents alert storms. The "no entropy data" branch fires conservatively — rapid renames with
-no write data (e.g. a pure rename wave) still trigger the detector.
+A **15-second cooldown** prevents alert storms.
 
 ---
 
@@ -323,37 +301,21 @@ no write data (e.g. a pure rename wave) still trigger the detector.
 
 **Files:** `Alerting/SignalFusion.cs`, `Alerting/ThreatSignal.cs`
 
-Every detection layer emits a `ThreatSignal`:
-
-```csharp
-class ThreatSignal {
-    SignalSource Source;     // Honeytoken | CryptoApi | EtwFileRate | Network | Signature
-    int          ProcessId;
-    string       ProcessName;
-    double       RawScore;   // 0.0 to 1.0  (normalised confidence)
-    List<string> Indicators; // e.g. ["RANSOM_EXT_RENAME", "EXT:.locked"]
-}
-```
-
 SignalFusion keeps a **per-process** list of signals with a **2-minute decay window**.
-On each new signal it computes:
 
 ```
 FusedScore = round( SUM( weight[source] * max(RawScore[source]) ) * 100 )
 ```
 
-Signal weights:
-
 | Source | Weight | Rationale |
 |--------|--------|-----------|
-| Honeytoken | **0.35** | Strongest signal — no legitimate process ever touches decoy files |
+| Honeytoken | **0.35** | Strongest signal -- no legitimate process ever touches decoy files |
 | CryptoApi | **0.25** | Bulk crypto operations are rare outside ransomware |
 | EtwFileRate | **0.20** | Mass file I/O is the physical signature of bulk encryption |
 | Network | **0.12** | C2 / exfiltration is indicative but less specific |
 | Signature | **0.08** | Process anomalies are supporting evidence |
 
-When `FusedScore >= 70`, a `FusedThreat` is emitted via `OnFusedThreat` with a
-**30-second per-process cooldown** to prevent alert flooding.
+When `FusedScore >= 70`, a `FusedThreat` is emitted with a **30-second per-process cooldown**.
 
 ---
 
@@ -365,21 +327,110 @@ Triggered by either:
 - `HoneytokenAlert.RiskScore >= 70` (direct FSW path, fast)
 - `FusedThreat.FusedScore >= 70` (multi-signal fusion path)
 
-**Step 1 — Suspend** (`NtSuspendProcess` P/Invoke into `ntdll.dll`):
-Freezes every thread of the target process atomically in ~1 ms.
-Stops file encryption cold while we still hold a valid process handle.
+**Step 1 -- Suspend** (`NtSuspendProcess` P/Invoke into `ntdll.dll`):
+Freezes all threads of the target process in ~1 ms.
 
-**Step 2 — Kill** (`Process.Kill(entireProcessTree: true)`):
-Terminates the process and all its children (e.g. `vssadmin` or `wbadmin` spawned
-as child processes to delete shadow copies).
+**Step 2 -- Kill** (`Process.Kill(entireProcessTree: true)`):
+Terminates the process and all its children.
 
-**Step 3 — Block execution path** (only when binary path starts with `Temp`/`AppData`/`LocalAppData`):
+**Step 3 -- Block execution path** (only for `Temp`/`AppData` binaries):
 ```
-icacls.exe "<path>" /deny "Everyone:(X)"        <- prevents re-launch
-MpCmdRun.exe -Scan -ScanType 3 -File "<path>"   <- queues Defender scan / quarantine
+icacls.exe "<path>" /deny "Everyone:(X)"
+MpCmdRun.exe -Scan -ScanType 3 -File "<path>"
 ```
 
-All containment actions are logged to `rdrs_containment.json`.
+**Containment modes** (configurable in `rdrs_config.json`):
+
+| Mode | Behaviour |
+|------|-----------|
+| `KillAndSuspend` | Full response: suspend, kill, block, scan (default) |
+| `SuspendOnly` | Freeze process but do not kill |
+| `AlertOnly` | Log the alert only, take no process action |
+
+---
+
+## Windows Tray Application
+
+RDRS runs as a **Windows system tray application** -- no console window by default.
+
+**Tray icon:** Shows the RDRS logo in the system tray (bottom-right of taskbar).
+
+**Right-click context menu:**
+
+| Menu item | Action |
+|-----------|--------|
+| RDRS Active -- N honeytokens watching | Status display (non-clickable) |
+| Open Dashboard | Opens the live WinForms dashboard |
+| View Last Alert | Shows last alert in a message box |
+| Open Alert Log | Opens `rdrs_alerts.json` in Notepad |
+| Pause Protection (30s) | Temporarily disables FSW alerting |
+| Exit | Cleans up honeytokens and exits |
+
+**Double-clicking** the tray icon opens the Dashboard.
+
+**Balloon notifications:** A balloon tip appears for every CRITICAL or HIGH alert
+(configurable via `NotificationLevel` in the config).
+
+**Auto-start:** RDRS registers itself in
+`HKCU\Software\Microsoft\Windows\CurrentVersion\Run` on first launch so it starts
+automatically on Windows login.
+
+**Desktop shortcut:** `RDRS.lnk` is created on the Desktop on first launch.
+
+---
+
+## Live Dashboard
+
+**File:** `UI/DashboardForm.cs`
+
+A WinForms dark-themed dashboard (1120 x 700) showing real-time detection state.
+
+**Status bar (top):**
+- Green `PROTECTED` when watchers are active
+- Yellow `PAUSED` when protection is paused
+
+**Left panel -- Alert feed:**
+- DataGridView showing the last 50 honeytoken alerts
+- Rows colour-coded: red = CRITICAL, orange = HIGH, yellow = MEDIUM, gray = LOW
+
+**Right panel -- Charts and stats:**
+- GDI+ bar chart: alert counts by event type (Changed / Renamed / Deleted / Created)
+- Stats panel: total alerts, uptime, last alert time, tokens watching
+
+**Toolbar buttons:**
+
+| Button | Action |
+|--------|--------|
+| Pause / Resume | Toggle FSW protection |
+| Clear Alerts | Clear the on-screen grid |
+| View Log | Open rdrs_alerts.json in Notepad |
+| Close | Hide the dashboard (RDRS keeps running) |
+
+The dashboard refreshes every **2 seconds**. Closing it hides it (X button); RDRS
+continues running in the tray. Reopen via right-click menu or double-click tray icon.
+
+---
+
+## Configuration
+
+**File:** `Config/RdrsConfig.cs`, `Config/ConfigManager.cs`
+
+Config is stored at `%APPDATA%\RDRS\rdrs_config.json`. Created automatically on first run.
+
+```json
+{
+  "ContainmentMode": "KillAndSuspend",
+  "NotificationLevel": "All",
+  "EnableHoneytokens": true,
+  "EnableEtwMonitor": true,
+  "EnableNetworkMonitor": true
+}
+```
+
+**ContainmentMode options:** `KillAndSuspend` | `SuspendOnly` | `AlertOnly`
+
+**NotificationLevel options:** `All` | `High` | `Critical`
+(controls which tray balloon notifications appear)
 
 ---
 
@@ -389,9 +440,9 @@ All containment actions are logged to `rdrs_containment.json`.
 
 ```
   +==================================================================+
-  |  ⚠  HONEYTOKEN ALERT [B4B6598D]  --  CRITICAL (Score: 100/100)  |
+  |  HONEYTOKEN ALERT [B4B6598D]  --  CRITICAL (Score: 100/100)     |
   +==================================================================+
-  Time      : 2026-03-17 02:41:53.155
+  Time      : 2026-03-17 02:41:53
   Event     : Renamed
   Token     : _AAAA_resume_final.docx
   Directory : C:\Users\User\Desktop
@@ -404,21 +455,6 @@ All containment actions are logged to `rdrs_containment.json`.
   -----------------------------------------------------------------
 ```
 
-**Multi-signal fusion alert (console):**
-
-```
-  +==================================================================+
-  |  ⚡  MULTI-SIGNAL THREAT [A1C3F7E2]  --  CRITICAL (87/100)       |
-  +==================================================================+
-  Time      : 2026-03-17 02:41:54.210
-  Process   : evil.exe (PID: 9812)
-  Sources   : Honeytoken, CryptoApi, EtwFileRate
-    [Honeytoken    ] score=0.95  HIGH_ENTROPY_WRITE, RENAMED_UNKNOWN_EXT
-    [CryptoApi     ] score=0.82  CRYPTO_LOAD_AND_FILE_BURST  DLL_LOADS:3
-    [EtwFileRate   ] score=0.73  FILE_RATE_HIGH  FILES:67_IN_5s
-  -----------------------------------------------------------------
-```
-
 ---
 
 ## Project Structure
@@ -426,36 +462,52 @@ All containment actions are logged to `rdrs_containment.json`.
 ```
 RDRS/
 |
-+-- Program.cs                    Entry point — CancellationToken + DeceptionEngine
-+-- DeceptionEngine.cs            Orchestrator — starts all monitors, wires callbacks
-+-- HoneytokenFile.cs             Data model for a single planted decoy file
-+-- HoneytokenPlanter.cs          Creates valid decoy files + configures ACLs/MIL
-+-- WatcherManager.cs             FileSystemWatcher per directory + shell-process hint
-+-- AlertBuilder.cs               Builds HoneytokenAlert (process attr + entropy + risk)
-+-- AlertManager.cs               Thread-safe alert dispatcher + JSON append-logger
-+-- ConsoleUI.cs                  Live status board + coloured alert rendering
++-- Program.cs                     Entry point -- tray mode or --console mode
++-- DeceptionEngine.cs             Orchestrator -- starts all monitors, wires callbacks
++-- HoneytokenFile.cs              Data model for a single planted decoy file
++-- HoneytokenPlanter.cs           Creates valid decoy files + configures ACLs/MIL
++-- WatcherManager.cs              FileSystemWatcher per directory + shell-process hint
++-- AlertBuilder.cs                Builds HoneytokenAlert (process attr + entropy + risk)
++-- AlertManager.cs                Thread-safe alert dispatcher + JSON append-logger
++-- ConsoleUI.cs                   Live status board + coloured alert rendering
++-- app.manifest                   UAC requireAdministrator + Windows 10/11 compat
++-- HoneytokenWatcher.csproj       .NET 8 WinExe x64 + embedded logo resource
 |
 +-- Alerting/
-|   +-- ThreatSignal.cs           ThreatSignal / FusedThreat models + SignalSource enum
-|   +-- SignalFusion.cs           Weighted per-process fusion engine (2-min decay window)
+|   +-- ThreatSignal.cs            ThreatSignal / FusedThreat models + SignalSource enum
+|   +-- SignalFusion.cs            Weighted per-process fusion engine (2-min decay window)
 |
 +-- Analysis/
-|   +-- EntropyAnalyzer.cs        Shannon entropy (0-8 bits/byte, FileShare.ReadWrite)
-|   +-- BurstDetector.cs          Sliding-window file-event rate + entropy threshold
-|   +-- VssWatcher.cs             WMI shadow-copy / backup-deletion process watcher
+|   +-- EntropyAnalyzer.cs         Shannon entropy (0-8 bits/byte, FileShare.ReadWrite)
+|   +-- BurstDetector.cs           Sliding-window file-event rate + entropy threshold
+|   +-- VssWatcher.cs              WMI shadow-copy / backup-deletion process watcher
 |
 +-- Containment/
-|   +-- ContainmentEngine.cs      Suspend -> Kill -> icacls block -> Defender scan
+|   +-- ContainmentEngine.cs       Suspend -> Kill -> icacls block -> Defender scan
+|
++-- Config/
+|   +-- RdrsConfig.cs              Config model (ContainmentMode, NotificationLevel, flags)
+|   +-- ConfigManager.cs           Load/save %APPDATA%\RDRS\rdrs_config.json
 |
 +-- Monitoring/
-|   +-- EtwMonitor.cs             NT Kernel Logger — FileIO + ImageLoad ETW events
-|   +-- CryptoApiMonitor.cs       BCrypt DLL-load frequency + cross-signal correlation
-|   +-- ProcessBehaviorScorer.cs  WMI I/O rate + parent-child anomaly + launch path
-|   +-- NetworkMonitor.cs         IPGlobalProperties + Tor exit IPs + exfil correlation
+|   +-- EtwMonitor.cs              NT Kernel Logger -- FileIO + ImageLoad ETW events
+|   +-- CryptoApiMonitor.cs        BCrypt DLL-load frequency + cross-signal correlation
+|   +-- ProcessBehaviorScorer.cs   WMI I/O rate + parent-child anomaly + launch path
+|   +-- NetworkMonitor.cs          IPGlobalProperties + Tor exit IPs + exfil correlation
 |
-+-- HoneytokenWatcher.csproj      .NET 8 Windows x64
-                                  System.Management 7.0.0
-                                  Microsoft.Diagnostics.Tracing.TraceEvent 3.1.14
++-- UI/
+|   +-- TrayApplication.cs         NotifyIcon tray agent + context menu + balloon tips
+|   +-- DashboardForm.cs           WinForms live dashboard (alert grid + bar chart)
+|   +-- ShieldIcon.cs              Loads embedded logo; falls back to GDI+ shield
+|   +-- ransa logo.jpg             Embedded RDRS logo (EmbeddedResource)
+|
++-- Tests/
+    +-- test_1_write_normal.ps1    Write plain text -> CRITICAL ~80
+    +-- test_2_rename_extension.ps1 Rename to .locked -> CRITICAL ~100
+    +-- test_3_high_entropy_write.ps1 Write random bytes -> CRITICAL 100 + HIGH_ENTROPY_WRITE
+    +-- test_4_delete_token.ps1    Delete token -> CRITICAL ~85
+    +-- test_5_burst_attack.ps1    Touch all 8 tokens -> 8x CRITICAL + BURST ALERT
+    +-- test_6_full_ransomware_sim.ps1 Full chain: read+encrypt+rename -> max score
 ```
 
 ---
@@ -466,15 +518,14 @@ RDRS/
 |-------------|--------|
 | **OS** | Windows 10 / 11 (x64) |
 | **.NET SDK** | .NET 8.0 or later |
-| **Privileges** | Standard user for core detection; **Administrator** for ETW, VSS watcher, process kill across users |
-| **NuGet packages** | `System.Management 7.0.0` (WMI), `Microsoft.Diagnostics.Tracing.TraceEvent 3.1.14` (ETW) |
+| **Privileges** | Auto-elevates to Admin via UAC prompt on launch |
+| **NuGet packages** | `System.Management 7.0.0`, `Microsoft.Diagnostics.Tracing.TraceEvent 3.1.14` |
 
 Features available **without** admin:
 
 - Honeytoken planting and FileSystemWatcher monitoring
 - Shannon entropy analysis on writes
 - File burst detection
-- Process attribution (Restart Manager + snapshot)
 - CryptoApiMonitor correlation layer
 - ProcessBehaviorScorer (WMI works for same-user processes)
 - NetworkMonitor (TCP connection polling)
@@ -483,7 +534,7 @@ Features available **without** admin:
 Features requiring **Administrator**:
 
 - ETW kernel session (FileIOInit / FileIO / ImageLoad)
-- VSS/shadow-copy watcher (WMI system-wide process creation events)
+- VSS/shadow-copy watcher
 - BCrypt ETW provider
 - Killing elevated/system processes
 - `icacls` execution-path block
@@ -510,14 +561,26 @@ dotnet build -c Release
 
 ## Running the Tool
 
-**Recommended: run as Administrator** to unlock ETW and VSS layers.
+Simply double-click **`HoneytokenWatcher.exe`** (or run it from a terminal).
+
+RDRS will:
+1. Show a UAC prompt to elevate to Administrator
+2. Start silently in the system tray (look for the RDRS logo near the clock)
+3. Plant 8 honeytokens across Desktop, Documents, Downloads, and Pictures
+4. Start all detection layers in the background
+
+**Tray icon controls:**
+- **Double-click** the tray icon to open the live Dashboard
+- **Right-click** for the context menu (pause, alerts, log, exit)
+
+**Console mode** (for debugging / development):
 
 ```powershell
-# From an elevated PowerShell prompt:
-.\bin\Release\net8.0-windows\HoneytokenWatcher.exe
+# Run as Administrator -- shows live status board in terminal
+.\bin\Release\net8.0-windows\HoneytokenWatcher.exe --console
 ```
 
-**Startup sequence printed to console:**
+**Startup sequence (console mode):**
 
 ```
   [*] Alert log -> D:\...\rdrs_alerts.json
@@ -532,65 +595,103 @@ dotnet build -c Release
   [*] Network monitor active (TCP connections + hardcoded Tor exits).
 ```
 
-A live **status board** then appears, refreshing every 500 ms, showing the state of each
-honeytoken (`WATCHING`, `HIT!!`, `CONTAINED`) and total alert count.
-
-Press **`Ctrl+C`** to stop. All honeytoken files are deleted automatically on shutdown.
+Press **`Ctrl+C`** (console mode) or **Exit** (tray menu) to stop.
+All honeytoken files are deleted automatically on shutdown.
 
 ---
 
 ## Testing Detection
 
-### Test 1 — Rename to ransomware extension (simulates encryption rename)
+Six ready-to-run PowerShell test scripts are in the `Tests/` folder.
+
+**How to run:**
 
 ```powershell
-$src = "$env:USERPROFILE\Desktop\_AAAA_resume_final.docx"
-attrib -H -S $src
-Rename-Item $src "$env:USERPROFILE\Desktop\_AAAA_resume_final.docx.locked"
+# Open PowerShell AS ADMINISTRATOR, then:
+powershell -ExecutionPolicy Bypass -File "D:\PBL RANS\Tests\test_3_high_entropy_write.ps1"
 ```
 
-**Expected output:** CRITICAL alert (100/100) + Containment fires against the PowerShell
-process within ~330 ms.
+Or right-click the `.ps1` file -> **Run with PowerShell** (as admin).
 
 ---
 
-### Test 2 — High-entropy write (simulates AES-256 encryption output)
+### Test 1 -- Write Normal Data (Score: ~80, CRITICAL)
 
 ```powershell
-$target = "$env:USERPROFILE\Documents\_AAAA_family_vacation.jpg"
-attrib -H -S $target
-$bytes = New-Object byte[] 4096
-[System.Security.Cryptography.RandomNumberGenerator]::Fill($bytes)
-[System.IO.File]::WriteAllBytes($target, $bytes)
+powershell -ExecutionPolicy Bypass -File ".\Tests\test_1_write_normal.ps1"
 ```
 
-**Expected output:** CRITICAL alert with `HIGH_ENTROPY_WRITE` indicator (~7.98 bits/byte).
+Writes plain text to `_AAAA_resume_final.docx` on the Desktop.
+Triggers a `Changed` event. Expected: CRITICAL alert.
 
 ---
 
-### Test 3 — Shadow copy deletion (simulates ransomware pre-encryption step)
+### Test 2 -- Rename with Extension Change (Score: ~100, CRITICAL)
 
 ```powershell
-# Must run as admin — command is detected and alerted, NOT actually executed by RDRS
+powershell -ExecutionPolicy Bypass -File ".\Tests\test_2_rename_extension.ps1"
+```
+
+Renames `_AAAA_tax_return_2024.pdf` to `.pdf.locked` then restores it.
+Triggers `Renamed` + extension-change bonus. Expected: CRITICAL alert (100/100).
+
+---
+
+### Test 3 -- High Entropy Write (Score: 100, CRITICAL + HIGH_ENTROPY_WRITE)
+
+```powershell
+powershell -ExecutionPolicy Bypass -File ".\Tests\test_3_high_entropy_write.ps1"
+```
+
+Overwrites `_AAAA_family_vacation.jpg` with 4096 random bytes (Shannon entropy ~8.0 bits/byte,
+threshold is 7.2). Triggers `HIGH_ENTROPY_WRITE` indicator (+25 pts).
+Expected: CRITICAL + tray balloon notification.
+
+---
+
+### Test 4 -- Delete Token (Score: ~85, CRITICAL)
+
+```powershell
+powershell -ExecutionPolicy Bypass -File ".\Tests\test_4_delete_token.ps1"
+```
+
+Deletes `_AAAA_passwords_backup.txt` from Downloads.
+Expected: CRITICAL alert. Restart RDRS to replant.
+
+---
+
+### Test 5 -- Burst Attack (Score: 80+ x8 + BURST ALERT)
+
+```powershell
+powershell -ExecutionPolicy Bypass -File ".\Tests\test_5_burst_attack.ps1"
+```
+
+Touches all 8 honeytokens within ~200 ms. Triggers BurstDetector (>= 3 events in <= 2s).
+Expected: 8 CRITICAL individual alerts + 1 BURST alert in the dashboard.
+
+---
+
+### Test 6 -- Full Ransomware Simulation (Score: 100 x6+, containment fires)
+
+```powershell
+powershell -ExecutionPolicy Bypass -File ".\Tests\test_6_full_ransomware_sim.ps1"
+```
+
+Full attack chain: recon reads -> high-entropy overwrites -> rename with `.rdrs_enc` -> restore.
+**WARNING:** This triggers full containment. Your PowerShell window may be killed if
+`ContainmentMode = KillAndSuspend`. Run from a second window.
+
+---
+
+### Manual tests (inline)
+
+**Shadow copy deletion** (admin required -- RDRS detects the command, does not run it):
+
+```powershell
 vssadmin delete shadows /all /quiet
 ```
 
-**Expected output:** CRITICAL alert (100/100), `SHADOW_COPY_DELETION_ATTEMPT` indicator.
-
----
-
-### Test 4 — Burst wave (simulates mass file encryption)
-
-```powershell
-$dir = "$env:USERPROFILE\Documents"
-1..15 | ForEach-Object {
-    $b = New-Object byte[] 1024
-    [System.Security.Cryptography.RandomNumberGenerator]::Fill($b)
-    [System.IO.File]::WriteAllBytes("$dir\enc_$_.tmp", $b)
-}
-```
-
-**Expected output:** `⚡ ENCRYPTION WAVE DETECTED — CRITICAL (Score: 95/100)` burst alert.
+Expected: CRITICAL alert (100/100), `SHADOW_COPY_DELETION_ATTEMPT` indicator.
 
 ---
 
@@ -598,15 +699,17 @@ $dir = "$env:USERPROFILE\Documents"
 
 | File | Contents |
 |------|----------|
-| `rdrs_alerts.json` | JSON array of `HoneytokenAlert` objects, appended on every detection |
-| `rdrs_containment.json` | JSON array of `ContainmentRecord` objects (action taken per alert) |
+| `rdrs_alerts.json` | JSON array of `HoneytokenAlert` objects |
+| `rdrs_containment.json` | JSON array of `ContainmentRecord` objects |
+| `%APPDATA%\RDRS\rdrs_config.json` | User configuration |
+| `%APPDATA%\RDRS\rdrs.ico` | RDRS icon (used by desktop shortcut) |
 
 Example alert entry:
 
 ```json
 {
   "AlertId": "B4B6598D",
-  "Timestamp": "2026-03-17T02:41:53.1550000",
+  "Timestamp": "2026-03-17T02:41:53.155",
   "TokenPath": "C:\\Users\\User\\Desktop\\_AAAA_resume_final.docx",
   "TokenFileName": "_AAAA_resume_final.docx",
   "TokenDirectory": "C:\\Users\\User\\Desktop",
@@ -634,14 +737,14 @@ Ransomware *must* touch files. A perfectly hidden decoy that no legitimate softw
 provides a near-zero-false-positive signal. Any access = malicious intent.
 
 **Why Shannon entropy?**
-AES-256 and ChaCha20 ciphertext is statistically indistinguishable from random noise —
-entropy ≈ 7.95–8.0 bits/byte. Plain text sits at 4.5–5.5 bits/byte. The 7.2 threshold
-catches ransomware output while tolerating normal ZIP/JPEG content (~7.0–7.5 bits/byte).
+AES-256 and ChaCha20 ciphertext is statistically indistinguishable from random noise --
+entropy ~7.95-8.0 bits/byte. Plain text sits at 4.5-5.5 bits/byte. The 7.2 threshold
+catches ransomware output while tolerating normal ZIP/JPEG content (~7.0-7.5 bits/byte).
 
 **Why `NtSuspendProcess` before `Kill`?**
-`Kill()` is not instantaneous — the OS schedules termination over several scheduler ticks.
+`Kill()` is not instantaneous -- the OS schedules termination over several ticks.
 During those milliseconds the ransomware continues encrypting files. `NtSuspendProcess`
-freezes all threads atomically in ~1 ms, stopping I/O cold, then `Kill` terminates cleanly.
+freezes all threads in ~1 ms, stopping I/O cold, then `Kill` terminates cleanly.
 
 **Why a weighted fusion score instead of any-signal-fires?**
 Individual signals have high false-positive rates. Bcrypt.dll is loaded by browsers and
@@ -655,13 +758,12 @@ same PID in a short window is conclusive.
 - The Tor exit-node list is **hardcoded** and will become stale. In production, refresh it
   periodically from the Tor Project's exit-list endpoint.
 - Process attribution via Restart Manager only works when the attacker holds a file handle
-  open. One-shot commands (e.g. PowerShell `Set-Content`) close the handle immediately;
-  the FSW-time shell-process hint catches these cases instead.
+  open. The FSW-time shell-process hint catches one-shot commands (e.g. `Set-Content`).
 - The tool does **not** prevent ransomware from encrypting files it opens *before* any
-  honeytoken is touched. Planting tokens in the directories containing the most sensitive
-  files minimises this detection window.
-- WMI polling adds ~50–200 ms latency to I/O-rate signals. The FSW path has <5 ms end-to-end
-  latency from file event to alert.
+  honeytoken is touched. Planting tokens in directories with the most sensitive files
+  minimises this detection window.
+- WMI polling adds ~50-200 ms latency to I/O-rate signals. The FSW path has <5 ms
+  end-to-end latency from file event to alert.
 
 ---
 
@@ -671,13 +773,14 @@ This project was built as part of a **Problem-Based Learning (PBL)** assignment 
 cybersecurity. The goal was to go beyond theory and implement a working detection-and-response
 tool from scratch, integrating:
 
-- **Windows internals** — ETW, WMI, P/Invoke (ntdll, rstrtmgr, iphlpapi), Mandatory
+- **Windows internals** -- ETW, WMI, P/Invoke (ntdll, rstrtmgr, iphlpapi), Mandatory
   Integrity Control, FileSystemWatcher, Restart Manager
-- **Deception-based security** — honeypots / honeytokens as zero-false-positive tripwires
-- **Signal correlation and weighted scoring** — multi-sensor fusion for low false-positive rate
-- **Automatic incident response** — process suspension, kill, execution path blocking
-- **Forensic logging** — structured JSON audit trails for post-incident analysis
+- **Deception-based security** -- honeypots / honeytokens as zero-false-positive tripwires
+- **Signal correlation and weighted scoring** -- multi-sensor fusion for low false-positive rate
+- **Automatic incident response** -- process suspension, kill, execution path blocking
+- **Windows application** -- system tray agent, WinForms dashboard, UAC elevation, autostart
+- **Forensic logging** -- structured JSON audit trails for post-incident analysis
 
 ---
 
-*Press `Ctrl+C` to stop. Honeytoken files are always cleaned up on exit.*
+*Use tray icon -> Exit (or Ctrl+C in console mode) to stop. Honeytokens are always cleaned up on exit.*

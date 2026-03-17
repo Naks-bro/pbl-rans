@@ -47,6 +47,17 @@ namespace HoneytokenWatcher.Alerting
         public event Action<HoneytokenAlert>? OnAlert;
         public int TotalAlerts => _alerts.Count;
 
+        /// <summary>Returns the last <paramref name="n"/> alerts (thread-safe copy).</summary>
+        public List<HoneytokenAlert> GetRecent(int n)
+        {
+            lock (_lock)
+            {
+                if (_alerts.Count == 0) return new List<HoneytokenAlert>();
+                int count = Math.Min(n, _alerts.Count);
+                return _alerts.GetRange(_alerts.Count - count, count);
+            }
+        }
+
         private static readonly JsonSerializerOptions _jsonOpts = new()
         {
             WriteIndented = true,
