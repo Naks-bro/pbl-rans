@@ -1,6 +1,3 @@
-# Build outputs
-bin/
-obj/
 
 # User-specific files
 *.user
