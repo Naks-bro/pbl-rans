@@ -17,8 +17,6 @@ rdrs_siem.ndjson
 startup_err.txt
 startup_out.txt
 
-# Claude Code internal directory
-.claude/
 
 # OS files
 Thumbs.db
