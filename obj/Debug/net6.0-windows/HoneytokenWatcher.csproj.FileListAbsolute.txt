@@ -1,0 +1,5 @@
+D:\PBL RANS\obj\Debug\net6.0-windows\HoneytokenWatcher.csproj.AssemblyReference.cache
+D:\PBL RANS\obj\Debug\net6.0-windows\HoneytokenWatcher.GeneratedMSBuildEditorConfig.editorconfig
+D:\PBL RANS\obj\Debug\net6.0-windows\HoneytokenWatcher.AssemblyInfoInputs.cache
+D:\PBL RANS\obj\Debug\net6.0-windows\HoneytokenWatcher.AssemblyInfo.cs
+D:\PBL RANS\obj\Debug\net6.0-windows\HoneytokenWatcher.csproj.CoreCompileInputs.cache
