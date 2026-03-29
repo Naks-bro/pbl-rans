@@ -1,0 +1,30 @@
+
+# User-specific files
+*.user
+*.suo
+*.userosscache
+*.sln.docstates
+
+# Build output
+bin/
+obj/
+.dotnet/
+
+# IDE/editor
+.vs/
+.vscode/
+
+# Logs and generated runtime artifacts
+*.log
+rdrs_alerts.json
+rdrs_containment.json
+rdrs_siem.ndjson
+startup_err.txt
+startup_out.txt
+
+# Claude Code internal directory
+.claude/
+
+# OS files
+Thumbs.db
+.DS_Store
